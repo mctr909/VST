@@ -27,6 +27,34 @@ enum struct E_OSC_TYPE : unsigned char {
 	NOIS
 };
 
+enum struct E_CTRL_TYPE : unsigned char {
+	BANK_MSB = 0,
+	MODULATION = 1,
+	PORTA_TIME = 5,
+	DATA_MSB = 6,
+	VOLUME = 7,
+	PAN = 10,
+	EXPRESSION = 11,
+	BANK_LSB = 32,
+	HOLD = 64,
+	PORTAMENTO = 65,
+	RESONANCE = 71,
+	RELEACE = 72,
+	ATTACK = 73,
+	CUTOFF = 74,
+	VIB_RATE = 76,
+	VIB_DEPTH = 77,
+	VIB_DELAY = 78,
+	REVERB = 91,
+	CHORUS = 93,
+	DELAY = 94,
+	NRPN_LSB = 98,
+	NRPN_MSB = 99,
+	RPN_LSB = 100,
+	RPN_MSB = 101,
+	ALL_RESET = 121
+};
+
 // ============================================================================================
 // ç\ë¢ëÃ
 // ============================================================================================
@@ -70,11 +98,15 @@ typedef struct Channel {
 	signed char	  rpnMsb;
 	signed char	  rpnLsb;
 	unsigned char bendWidth;
-
+	
 	float		  pitch;
 
 	float delaySend;
 	float delayTime;
+	float chorusRate;
+	float chorusLfoU;
+	float chorusLfoV;
+	float chorusLfoW;
 	int writeIndex;
 	int readIndex;
 
