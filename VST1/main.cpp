@@ -30,37 +30,36 @@ VST1::VST1(audioMasterCallback audioMaster)
 	canProcessReplacing();
 
 	//上記の関数を呼び出した後に初期化を行う
-	m_MidiMsgNum = 0;
-	memset(m_MidiMsgList, 0, sizeof(MidiMessage) * MIDIMSG_MAXNUM);
+	mMidiMsgNum = 0;
+	memset(mMidiMsgList, 0, sizeof(MidiMessage) * MIDIMSG_MAXNUM);
 
 	// チャンネルのクリア
 	if (NULL == mpChannel) {
-		mpChannel = (Channel*)malloc(sizeof(Channel) * CH_COUNT);
+		mpChannel = (CHANNEL*)malloc(sizeof(CHANNEL) * CH_COUNT);
 	}
-	memset(mpChannel, 0, sizeof(Channel) * CH_COUNT);
+	memset(mpChannel, 0, sizeof(CHANNEL) * CH_COUNT);
 	for (int ch = 0; ch < CH_COUNT; ch++) {
 		clearChannel(&mpChannel[ch]);
 	}
 
 	// 発振器のクリア
-	if (NULL == mpOsc) {
-		mpOsc = (Osc*)malloc(sizeof(Osc) * OSC_COUNT);
+	if (NULL != mpOsc) {
+		free(mpOsc);
 	}
-	memset(mpOsc, 0, sizeof(Osc) * OSC_COUNT);
+	mpOsc = (OSC*)malloc(sizeof(OSC) * OSC_COUNT);
+	memset(mpOsc, 0, sizeof(OSC) * OSC_COUNT);
 	for (int oscCnt = 0; oscCnt < OSC_COUNT; oscCnt++) {
-		auto osc = &mpOsc[oscCnt];
+		auto osc = mpOsc + oscCnt;
 		osc->channel = 0;
-		osc->noteNo = -1;
+		osc->noteNo = 0;
 		osc->state = E_OSC_STATE::STANDBY;
-
-		osc->counter = 0.0f;
-		osc->param = 0.0f;
-		osc->time = 0.0f;
-
-		osc->level = 0.0f;
-		osc->amp = 0.0f;
-		osc->delta = 0.0f;
-		osc->nois = 0.0f;
+		osc->counter = 0.0;
+		osc->param = 0.0;
+		osc->time = 0.0;
+		osc->level = 0.0;
+		osc->amp = 0.0;
+		osc->pitch = 0.0;
+		osc->value = 1.0;
 	}
 }
 
@@ -70,24 +69,22 @@ VST1::VST1(audioMasterCallback audioMaster)
 // ============================================================================================
 VstInt32 VST1::processEvents(VstEvents* events) {
 	// MIDIのリストを初期化
-	m_MidiMsgNum = 0;
-	memset(m_MidiMsgList, 0, sizeof(MidiMessage) * MIDIMSG_MAXNUM);
+	mMidiMsgNum = 0;
+	memset(mMidiMsgList, 0, sizeof(MidiMessage) * MIDIMSG_MAXNUM);
 
 	// VSTイベントの回数だけループをまわす。
 	for (int i = 0; i < events->numEvents; i++) {
 		// 与えられたイベントがMIDIならばmidimsgbufにストックする
 		if ((events->events[i])->type == kVstMidiType) {
-			VstMidiEvent* midievent = (VstMidiEvent*)(events->events[i]);
-
-			m_MidiMsgList[m_MidiMsgNum].deltaFrames = midievent->deltaFrames;
-			m_MidiMsgList[m_MidiMsgNum].message = midievent->midiData[0] & 0xF0;	// MIDIメッセージ
-			m_MidiMsgList[m_MidiMsgNum].channel = midievent->midiData[0] & 0x0F;	// MIDIチャンネル
-			m_MidiMsgList[m_MidiMsgNum].data1 = midievent->midiData[1];				// MIDIデータ1
-			m_MidiMsgList[m_MidiMsgNum].data2 = midievent->midiData[2];				// MIDIデータ2
-			m_MidiMsgNum++;
-
+			auto midievent = (VstMidiEvent*)(events->events[i]);
+			mMidiMsgList[mMidiMsgNum].deltaFrames = midievent->deltaFrames;
+			mMidiMsgList[mMidiMsgNum].message = midievent->midiData[0] & 0xF0;	// MIDIメッセージ
+			mMidiMsgList[mMidiMsgNum].channel = midievent->midiData[0] & 0x0F;	// MIDIチャンネル
+			mMidiMsgList[mMidiMsgNum].data1 = midievent->midiData[1];			// MIDIデータ1
+			mMidiMsgList[mMidiMsgNum].data2 = midievent->midiData[2];			// MIDIデータ2
+			mMidiMsgNum++;
 			// MIDIメッセージのバッファがいっぱいの場合はループを打ち切る。
-			if (i >= MIDIMSG_MAXNUM) {
+			if (mMidiMsgNum >= MIDIMSG_MAXNUM) {
 				break;
 			}
 		}
@@ -113,14 +110,14 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 		//********************************
 		// MIDIメッセージがあるか確認
 		//********************************
-		if (0 < m_MidiMsgNum) {
+		if (0 < mMidiMsgNum) {
 			// MIDIメッセージを処理するタイミングかどうかを確認する。
-			if (m_MidiMsgList[midiMsgCur].deltaFrames <= s) {
+			if (mMidiMsgList[midiMsgCur].deltaFrames <= s) {
 				// MIDIメッセージの読み取り
-				readMidiMsg(&m_MidiMsgList[midiMsgCur], mpChannel, mpOsc);
+				readMidiMsg(&mMidiMsgList[midiMsgCur], mpChannel, mpOsc);
 				// midimsgbufからMIDIメッセージを読み出したので
 				// 読み込み位置を進め、MIDIメッセージの数を減らす
-				--m_MidiMsgNum;
+				--mMidiMsgNum;
 				++midiMsgCur;
 			}
 		}
@@ -136,7 +133,7 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 
 			auto pCh = &mpChannel[pOsc->channel];
 
-			auto sumWave = 0.0f;
+			auto sumWave = 0.0;
 			for (auto overSampling = 0; overSampling < 16; overSampling++) {
 				if (E_OSC_TYPE::SQR12 == pOsc->type) {
 					sumWave += sqr12(pOsc);
@@ -144,6 +141,8 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 					sumWave += sqr25(pOsc);
 				} else if (E_OSC_TYPE::SQR50 == pOsc->type) {
 					sumWave += sqr50(pOsc);
+				} else if (E_OSC_TYPE::SINE == pOsc->type) {
+					sumWave += sine(pOsc, pCh);
 				} else if (E_OSC_TYPE::NOIS == pOsc->type) {
 					sumWave += nois(pOsc);
 				} else {
@@ -153,22 +152,22 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 						sumWave += tri4bit(pOsc);
 					}
 				}
-				pOsc->counter += pOsc->delta * pCh->pitch * 0.0625f;
-				if (1.0f <= pOsc->counter) {
-					pOsc->counter -= 1.0f;
+				pOsc->counter += pOsc->pitch * pCh->pitch * 0.0625;
+				if (1.0 <= pOsc->counter) {
+					pOsc->counter -= 1.0;
 				}
 			}
 
 			// 出力
-			sumWave *= 0.25f * pCh->vol * pCh->exp * pOsc->level * pOsc->amp / (127 * 127 * 16);
-			pCh->outputL += sumWave * (1 - pCh->pan / 128.0f);
-			pCh->outputR += sumWave * (pCh->pan / 128.0f);
+			sumWave *= 0.25 * pCh->vol * pCh->exp * pOsc->level * pOsc->amp / (127.0 * 127.0 * 16.0);
+			pCh->outputL += sumWave * (1 - pCh->pan / 128.0);
+			pCh->outputR += sumWave * (pCh->pan / 128.0);
 
 			// エンベロープ
 			switch (pOsc->state) {
 			case E_OSC_STATE::ACTIVE:
 				if (pOsc->time < pCh->adsrAMP.holdTime) {
-					pOsc->amp += (1.0f - pOsc->amp) * pCh->adsrAMP.attack;
+					pOsc->amp += (1.0 - pOsc->amp) * pCh->adsrAMP.attack;
 				} else {
 					pOsc->amp += (pCh->adsrAMP.sustain - pOsc->amp) * pCh->adsrAMP.decay;
 				}
@@ -177,23 +176,14 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 				pOsc->amp -= pOsc->amp * pCh->adsrAMP.release;
 				break;
 			case E_OSC_STATE::PURGE:
-				pOsc->amp -= pOsc->amp * 500.0f / SAMPLE_RATE;
+				pOsc->amp -= pOsc->amp * 500.0 / sampleRate;
 				break;
 			}
-			pOsc->time += 1.0f;
+			pOsc->time += 1.0 / sampleRate;
 
-			// クリア
-			if (pCh->adsrAMP.holdTime < pOsc->time && pOsc->amp < 1 / 256.0f) {
+			// 待機条件
+			if (pCh->adsrAMP.holdTime < pOsc->time && pOsc->amp < 0.0001) {
 				pOsc->state = E_OSC_STATE::STANDBY;
-				pOsc->channel = 0;
-				pOsc->noteNo = -1;
-				pOsc->counter = 0.0f;
-				pOsc->param = 0.0f;
-				pOsc->time = 0.0f;
-				pOsc->level = 0.0f;
-				pOsc->amp = 0.0;
-				pOsc->delta = 0.0;
-				pOsc->nois = 0.0f;
 			}
 		}
 
@@ -204,8 +194,8 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 			// ディレイ
 			auto delayL = pCh->pDelayTapL[pCh->readIndex];
 			auto delayR = pCh->pDelayTapR[pCh->readIndex];
-			pCh->outputL += (delayL * 0.75f + delayR * 0.25f) * pCh->delaySend;
-			pCh->outputR += (delayR * 0.75f + delayL * 0.25f) * pCh->delaySend;
+			pCh->outputL += (delayL * 0.75 + delayR * 0.25) * pCh->delaySend;
+			pCh->outputR += (delayR * 0.75 + delayL * 0.25) * pCh->delaySend;
 			pCh->pDelayTapL[pCh->writeIndex] = pCh->outputL;
 			pCh->pDelayTapR[pCh->writeIndex] = pCh->outputR;
 			//
@@ -213,21 +203,21 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 			pCh->chorusLfoV += (pCh->chorusLfoW - pCh->chorusLfoU) * pCh->chorusRate;
 			pCh->chorusLfoW += (pCh->chorusLfoU - pCh->chorusLfoV) * pCh->chorusRate;
 			// 出力
-			outL[s] += pCh->outputL;
-			outR[s] += pCh->outputR;
-			pCh->outputL = 0.0f;
-			pCh->outputR = 0.0f;
+			outL[s] += (float)pCh->outputL;
+			outR[s] += (float)pCh->outputR;
+			pCh->outputL = 0.0;
+			pCh->outputR = 0.0;
 			//
 			pCh->writeIndex++;
 			if (sampleRate * 2 <= pCh->writeIndex) {
-				pCh->writeIndex -= sampleRate * 2;
+				pCh->writeIndex -= (int)(sampleRate * 2);
 			}
 			pCh->readIndex = pCh->writeIndex - (int)(pCh->delayTime * sampleRate);
 			if (pCh->readIndex < 0) {
-				pCh->readIndex += sampleRate * 2;
+				pCh->readIndex += (int)(sampleRate * 2);
 			}
 			if (sampleRate * 2 <= pCh->readIndex) {
-				pCh->readIndex -= sampleRate * 2;
+				pCh->readIndex -= (int)(sampleRate * 2);
 			}
 		}
 	}
@@ -236,7 +226,7 @@ void VST1::processReplacing(float** inputs, float** outputs, VstInt32 sampleFram
 // ============================================================================================
 // チャンネルのクリア
 // ============================================================================================
-void VST1::clearChannel(Channel* channel) {
+void VST1::clearChannel(CHANNEL* channel) {
 	channel->vol = 100;
 	channel->exp = 100;
 	channel->pan = 64;
@@ -251,45 +241,51 @@ void VST1::clearChannel(Channel* channel) {
 	channel->bankMsb = 0;
 	channel->bankLsb = 0;
 
-	channel->adsrAMP.rise = 0.0f;
-	channel->adsrAMP.top = 1.0f;
-	channel->adsrAMP.sustain = 1.0f;
-	channel->adsrAMP.fall = 0.0f;
-	channel->adsrAMP.attack = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrAMP.holdTime = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrAMP.decay = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrAMP.release = 1000.0f / SAMPLE_RATE / 1.0f;
+	channel->adsrAMP.rise = 0.0;
+	channel->adsrAMP.top = 1.0;
+	channel->adsrAMP.sustain = 1.0;
+	channel->adsrAMP.fall = 0.0;
+	channel->adsrAMP.attack = 500.0 / sampleRate / 1.0;
+	channel->adsrAMP.holdTime = 500.0 / sampleRate / 1.0;
+	channel->adsrAMP.decay = 500.0 / sampleRate / 1.0;
+	channel->adsrAMP.release = 500.0 / sampleRate / 1.0;
 
-	channel->adsrEQ.rise = 1.0f;
-	channel->adsrEQ.top = 1.0f;
-	channel->adsrEQ.sustain = 1.0f;
-	channel->adsrEQ.fall = 1.0f;
-	channel->adsrEQ.attack = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrEQ.holdTime = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrEQ.decay = 1000.0f / SAMPLE_RATE / 1.0f;
-	channel->adsrEQ.release = 1000.0f / SAMPLE_RATE / 1.0f;
+	channel->adsrEQ.rise = 1.0;
+	channel->adsrEQ.top = 1.0;
+	channel->adsrEQ.sustain = 1.0;
+	channel->adsrEQ.fall = 1.0;
+	channel->adsrEQ.attack = 500.0 / sampleRate / 1.0;
+	channel->adsrEQ.holdTime = 500.0 / sampleRate / 1.0;
+	channel->adsrEQ.decay = 500.0 / sampleRate / 1.0;
+	channel->adsrEQ.release = 500.0 / sampleRate / 1.0;
 
-	channel->chorusLfoU = 1.0f;
-	channel->chorusLfoV = -0.5f;
-	channel->chorusLfoW = -0.5f;
-	channel->chorusRate = 1.0f / (sqrt(3.0) * sampleRate);
-	channel->delaySend = 0.0f;
-	channel->delayTime = 0.17f;
-	channel->writeIndex = 0.0f;
-	if (NULL == channel->pDelayTapL) {
-		channel->pDelayTapL = (float*)malloc(sizeof(float) * sampleRate * 2);
+	channel->chorusSend = 0.0;
+	channel->chorusRate = 1.0 / (sqrt(3.0) * sampleRate);
+	channel->chorusDepth = 0.01;
+	channel->chorusLfoU = 1.0;
+	channel->chorusLfoV = -0.5;
+	channel->chorusLfoW = -0.5;
+
+	channel->writeIndex = 0;
+	channel->readIndex = 0;
+	channel->delaySend = 0.0;
+	channel->delayTime = 0.17;
+	if (NULL != channel->pDelayTapL) {
+		free(channel->pDelayTapL);
 	}
-	if (NULL == channel->pDelayTapR) {
-		channel->pDelayTapR = (float*)malloc(sizeof(float) * sampleRate * 2);
+	if (NULL != channel->pDelayTapR) {
+		free(channel->pDelayTapR);
 	}
-	memset(channel->pDelayTapL, 0, sizeof(float) * sampleRate * 2);
-	memset(channel->pDelayTapR, 0, sizeof(float) * sampleRate * 2);
+	channel->pDelayTapL = (double*)malloc(sizeof(double) * (int)(sampleRate * 2));
+	channel->pDelayTapR = (double*)malloc(sizeof(double) * (int)(sampleRate * 2));
+	memset(channel->pDelayTapL, 0, sizeof(double) * (int)(sampleRate * 2));
+	memset(channel->pDelayTapR, 0, sizeof(double) * (int)(sampleRate * 2));
 }
 
 // ============================================================================================
 // MIDIメッセージの読み取り
 // ============================================================================================
-void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
+void VST1::readMidiMsg(MidiMessage* midiMsg, CHANNEL* channel, OSC* osc) {
 	//**** NoteOff ****//
 	if (0x80 == midiMsg->message) {
 		for (auto oscIdx = 0; oscIdx < OSC_COUNT; ++oscIdx) {
@@ -297,9 +293,18 @@ void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
 				osc[oscIdx].state = E_OSC_STATE::RELEASE;
 			}
 		}
+		return;
 	}
 	//**** NoteOn ****//
 	if (0x90 == midiMsg->message) {
+		if (0 == midiMsg->data2) {
+			for (auto oscIdx = 0; oscIdx < OSC_COUNT; ++oscIdx) {
+				if (osc[oscIdx].channel == midiMsg->channel && osc[oscIdx].noteNo == midiMsg->data1) {
+					osc[oscIdx].state = E_OSC_STATE::RELEASE;
+				}
+			}
+			return;
+		}
 		for (auto oscIdx = 0; oscIdx < OSC_COUNT; ++oscIdx) {
 			if (osc[oscIdx].channel == midiMsg->channel && osc[oscIdx].noteNo == midiMsg->data1) {
 				osc[oscIdx].state = E_OSC_STATE::PURGE;
@@ -307,14 +312,21 @@ void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
 		}
 		for (auto oscIdx = 0; oscIdx < OSC_COUNT; ++oscIdx) {
 			if (osc[oscIdx].state == E_OSC_STATE::STANDBY) {
-				osc[oscIdx].channel = midiMsg->channel;
-				osc[oscIdx].noteNo = midiMsg->data1;
-				osc[oscIdx].level = midiMsg->data2 / 127.0f;
-				osc[oscIdx].delta = (float)(MASTER_PITCH * pow(2.0f, osc[oscIdx].noteNo / 12.0)) / sampleRate;
-				osc[oscIdx].state = E_OSC_STATE::ACTIVE;
+				auto pOsc = osc + oscIdx;
+				pOsc->channel = midiMsg->channel;
+				pOsc->noteNo = midiMsg->data1;
+				pOsc->level = midiMsg->data2 / 127.0;
+				pOsc->pitch = MASTER_PITCH * pow(2.0, osc[oscIdx].noteNo / 12.0) / sampleRate;
+				pOsc->counter = 0.0;
+				pOsc->param = 0.0;
+				pOsc->time = 0.0;
+				pOsc->amp = 0.0;
+				pOsc->value = 1.0;
+				pOsc->state = E_OSC_STATE::ACTIVE;
 				break;
 			}
 		}
+		return;
 	}
 	//**** C.C. ****//
 	if (0xB0 == midiMsg->message) {
@@ -346,10 +358,10 @@ void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
 			channel[midiMsg->channel].exp = midiMsg->data2;
 			break;
 		case E_CTRL_TYPE::RELEACE:
-			channel[midiMsg->channel].adsrAMP.release = midiMsg->data2 < 64 ? 1.0f : 1000.0f / SAMPLE_RATE / ((midiMsg->data2 * 200.0f / 127.0f) + 0.001f);
+			channel[midiMsg->channel].adsrAMP.release = midiMsg->data2 < 64 ? 1.0 : 500.0 / sampleRate / ((midiMsg->data2 / 127.0) * 100 + 1);
 			break;
 		case E_CTRL_TYPE::ATTACK:
-			channel[midiMsg->channel].adsrAMP.attack = 1000.0f / (SAMPLE_RATE * (((int)midiMsg->data2 / 64.0f) + 0.01f));
+			channel[midiMsg->channel].adsrAMP.attack = 500.0 / (sampleRate * (((int)midiMsg->data2 / 64.0) + 0.01));
 			break;
 		case E_CTRL_TYPE::REVERB:
 			channel[midiMsg->channel].rev = midiMsg->data2;
@@ -360,9 +372,9 @@ void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
 		case E_CTRL_TYPE::DELAY:
 			channel[midiMsg->channel].del = midiMsg->data2;
 			if (0 == midiMsg->data2) {
-				channel[midiMsg->channel].delaySend = 0.0f;
+				channel[midiMsg->channel].delaySend = 0.0;
 			} else {
-				channel[midiMsg->channel].delaySend = 0.9f * midiMsg->data2 / 127.0f;
+				channel[midiMsg->channel].delaySend = 0.9 * midiMsg->data2 / 127.0;
 			}
 			break;
 		case E_CTRL_TYPE::RPN_LSB:
@@ -372,54 +384,62 @@ void VST1::readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc) {
 			channel[midiMsg->channel].rpnMsb = midiMsg->data2;
 			break;
 		}
+		return;
 	}
 	//**** Program ****//
 	if (0xC0 == midiMsg->message) {
 		channel[midiMsg->channel].progNum = midiMsg->data1;
+		return;
 	}
 	//**** Pitch ****//
 	if (0xE0 == midiMsg->message) {
 		channel[midiMsg->channel].pitch = midiMsg->data1 | midiMsg->data2 << 7;
 		channel[midiMsg->channel].pitch -= 8192;
 		channel[midiMsg->channel].pitch = (float)pow(2.0, channel[midiMsg->channel].bendWidth * channel[midiMsg->channel].pitch / 98304.0);
+		return;
 	}
 }
 
 // ============================================================================================
 // 発振器
 // ============================================================================================
-inline float VST1::sqr50(Osc* osc) {
+inline double VST1::sqr50(OSC* osc) {
 	return osc->counter < 0.5 ? 1 : -1;
 }
-inline float VST1::sqr25(Osc* osc) {
+inline double VST1::sqr25(OSC* osc) {
 	return osc->counter < 0.25 ? 1 : -1;
 }
-inline float VST1::sqr12(Osc* osc) {
+inline double VST1::sqr12(OSC* osc) {
 	return osc->counter < 0.125 ? 1 : -1;
 }
-inline float VST1::tri(Osc* osc) {
+inline double VST1::tri(OSC* osc) {
 	if (osc->counter < 0.25) {
-		return osc->counter * 4.0f;
+		return osc->counter * 4.0;
 	} else if (osc->counter < 0.75) {
-		return 2.0f - osc->counter * 4.0f;
+		return 2.0 - osc->counter * 4.0;
 	} else {
-		return osc->counter * 4.0f - 4.0f;
+		return osc->counter * 4.0 - 4.0;
 	}
 }
-inline float VST1::tri4bit(Osc* osc) {
+inline double VST1::tri4bit(OSC* osc) {
 	if (osc->counter < 0.25) {
-		return (int)(osc->counter * 32.0f) * 0.125f;
+		return (int)(osc->counter * 32.0) * 0.125;
 	} else if (osc->counter < 0.75) {
-		return (int)(16.0f - osc->counter * 32.0f) * 0.125f;
+		return (int)(16.0 - osc->counter * 32.0) * 0.125;
 	} else {
-		return (int)(osc->counter * 32.0f - 32.0f) * 0.125f;
+		return (int)(osc->counter * 32.0 - 32.0) * 0.125;
 	}
 }
-inline float VST1::nois(Osc* osc) {
-	osc->param += 4 * osc->delta;
-	if (1.0f <= osc->param) {
-		osc->param -= 1.0f;
-		osc->nois = 2048 * (1 / 1024.0f - 128 * rand() / 2147483647.0f);
+inline double VST1::sine(OSC* osc, CHANNEL *ch) {
+	osc->value -= osc->param * 0.39269908 * osc->pitch * ch->pitch;
+	osc->param += osc->value * 0.39269908 * osc->pitch * ch->pitch;
+	return osc->value;
+}
+inline double VST1::nois(OSC* osc) {
+	osc->param += 4 * osc->pitch;
+	if (1.0 <= osc->param) {
+		osc->param -= 1.0;
+		osc->value = 2048 * (1 / 1024.0 - 128.0 * rand() / 2147483647.0);
 	}
-	return osc->nois;
+	return osc->value;
 }

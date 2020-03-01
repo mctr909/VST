@@ -6,11 +6,10 @@
 // ============================================================================================
 // 定数
 // ============================================================================================
-#define SAMPLE_RATE		44100
 #define MASTER_PITCH	8.1757989
 #define OSC_COUNT		128
 #define CH_COUNT		16
-#define MIDIMSG_MAXNUM	4410
+#define MIDIMSG_MAXNUM	1024
 
 enum struct E_OSC_STATE : unsigned char {
 	STANDBY,
@@ -24,6 +23,7 @@ enum struct E_OSC_TYPE : unsigned char {
 	SQR50,
 	SQR25,
 	SQR12,
+	SINE,
 	NOIS
 };
 
@@ -59,30 +59,30 @@ enum struct E_CTRL_TYPE : unsigned char {
 // 構造体
 // ============================================================================================
 #pragma pack(push, 8)
-typedef struct MidiMessage {
+typedef struct {
 	VstInt32 deltaFrames;  //MIDIメッセージを処理するタイミング
 	unsigned char message; //MIDIメッセージ番号
 	unsigned char channel; //MIDIチャンネル
 	unsigned char data1;   //MIDIデータ1
 	unsigned char data2;   //MIDIデータ2
-};
+} MidiMessage;
 #pragma pack(pop)
 
 #pragma pack(push, 8)
-typedef struct ADSR {
-	float rise;
-	float top;
-	float sustain;
-	float fall;
-	float attack;
-	float holdTime;
-	float decay;
-	float release;
-};
+typedef struct {
+	double rise;
+	double top;
+	double sustain;
+	double fall;
+	double attack;
+	double holdTime;
+	double decay;
+	double release;
+} ENVELOPE;
 #pragma pack(pop)
 
 #pragma pack(push, 4)
-typedef struct Channel {
+typedef struct {
 	unsigned char progNum;
 	unsigned char bankMsb;
 	unsigned char bankLsb;
@@ -99,52 +99,54 @@ typedef struct Channel {
 	signed char	  rpnLsb;
 	unsigned char bendWidth;
 	
-	float		  pitch;
+	double pitch;
 
-	float delaySend;
-	float delayTime;
-	float chorusRate;
-	float chorusLfoU;
-	float chorusLfoV;
-	float chorusLfoW;
+	double chorusSend;
+	double chorusRate;
+	double chorusDepth;
+	double chorusLfoU;
+	double chorusLfoV;
+	double chorusLfoW;
+
 	int writeIndex;
 	int readIndex;
+	double delaySend;
+	double delayTime;
+	double* pDelayTapL = NULL;
+	double* pDelayTapR = NULL;
 
-	float outputL;
-	float outputR;
-	float* pDelayTapL = NULL;
-	float* pDelayTapR = NULL;
+	double outputL;
+	double outputR;
 
-	ADSR adsrAMP;
-	ADSR adsrEQ;
-};
+	ENVELOPE adsrAMP;
+	ENVELOPE adsrEQ;
+} CHANNEL;
 #pragma pack(pop)
 
-typedef struct Osc {
+typedef struct {
 	unsigned char channel;
-	signed char   noteNo;
+	unsigned char noteNo;
 	E_OSC_STATE   state;
 	E_OSC_TYPE    type;
-	
-	float counter;
-	float param;
-	float time;
 
-	float level;
-	float amp;
-	float delta;
-	float nois;
-};
+	double time;
+	double counter;
+	double level;
+	double amp;
+	double pitch;
+	double param;
+	double value;
+} OSC;
 
 // ============================================================================================
 // VSTの基本となるクラス
 // ============================================================================================
 class VST1 : public AudioEffectX {
 protected:
-	int          m_MidiMsgNum;					// 受け取ったMIDIメッセージの数
-	MidiMessage  m_MidiMsgList[MIDIMSG_MAXNUM];	// 受け取ったMIDIメッセージを保管するバッファ
-	Channel      *mpChannel = NULL;				// MIDIチャンネルのバッファ
-	Osc          *mpOsc = NULL;					// 発振器のバッファ
+	int          mMidiMsgNum;					// 受け取ったMIDIメッセージの数
+	MidiMessage  mMidiMsgList[MIDIMSG_MAXNUM];	// 受け取ったMIDIメッセージを保管するバッファ
+	CHANNEL      *mpChannel = NULL;				// MIDIチャンネルのバッファ
+	OSC          *mpOsc = NULL;					// 発振器のバッファ
 
 public:
 	VST1(audioMasterCallback audioMaster);
@@ -154,14 +156,15 @@ public:
 	virtual void processReplacing(float** inputs, float** outputs, VstInt32 sampleFrames);
 
 private:
-	void clearChannel(Channel* channel);
-	void readMidiMsg(MidiMessage* midiMsg, Channel* channel, Osc* osc);
+	void clearChannel(CHANNEL* channel);
+	void readMidiMsg(MidiMessage* midiMsg, CHANNEL* channel, OSC* osc);
 
 private:
-	inline float sqr50(Osc* osc);
-	inline float sqr25(Osc* osc);
-	inline float sqr12(Osc* osc);
-	inline float tri(Osc* osc);
-	inline float tri4bit(Osc* osc);
-	inline float nois(Osc* osc);
+	inline double sqr50(OSC* osc);
+	inline double sqr25(OSC* osc);
+	inline double sqr12(OSC* osc);
+	inline double tri(OSC* osc);
+	inline double tri4bit(OSC* osc);
+	inline double sine(OSC* osc, CHANNEL* ch);
+	inline double nois(OSC* osc);
 };
